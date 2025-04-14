@@ -13,7 +13,7 @@ const Home = () => {
   const fileInputRef = useRef(null);
   
   // API configuration - update with your actual API URL
-  const API_URL = 'https://vercel.com/josiahs-projects-e4873166/validation-api';
+  const API_URL = 'https://validation-p43s9ldbm-josiahs-projects-e4873166.vercel.app';
   const MAX_BATCH_SIZE = 10; // Number of emails to process in parallel
   
   // Handle file upload
