@@ -1,45 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import Papa from 'papaparse';
 
-// Known company domains - this would be your database/API
-const KNOWN_COMPANY_EMAILS = {
-  'example.com': true,
-  'acme.org': true,
-  'yourcompany.com': true,
-  // Add more known company domains
-};
-
-// Common domain corrections
-const DOMAIN_CORRECTIONS = {
-  'gmail.cm': 'gmail.com',
-  'gmail.con': 'gmail.com',
-  'gmial.com': 'gmail.com',
-  'gamil.com': 'gmail.com',
-  'gmal.com': 'gmail.com',
-  'gmail.co': 'gmail.com',
-  'gmail.net': 'gmail.com',
-  'hotmail.cm': 'hotmail.com',
-  'hotmail.con': 'hotmail.com',
-  'hotmal.com': 'hotmail.com',
-  'hotmai.com': 'hotmail.com',
-  'homail.com': 'hotmail.com',
-  'hotmail.co': 'hotmail.com',
-  'hotmail.net': 'hotmail.com',
-  'yahoo.cm': 'yahoo.com',
-  'yahoo.con': 'yahoo.com',
-  'yaho.com': 'yahoo.com',
-  'yahooo.com': 'yahoo.com',
-  'yahoo.co': 'yahoo.com',
-  'yahoo.net': 'yahoo.com',
-  'outlook.cm': 'outlook.com',
-  'outlook.con': 'outlook.com',
-  'outook.com': 'outlook.com',
-  'outlook.co': 'outlook.com',
-  'icloud.cm': 'icloud.com',
-  'icloud.con': 'icloud.com',
-  'iclod.com': 'icloud.com',
-};
-
 const Home = () => {
   const [file, setFile] = useState(null);
   const [emails, setEmails] = useState([]);
@@ -51,7 +12,8 @@ const Home = () => {
   const [processingMessage, setProcessingMessage] = useState('');
   const fileInputRef = useRef(null);
   
-  const ZEROBOUNCE_API_KEY = 'c8086c20aaf440b4b568a734bc1fa0ec';
+  // API configuration - update with your actual API URL
+  const API_URL = 'https://your-api-url.vercel.app/api/validate';
   const MAX_BATCH_SIZE = 10; // Number of emails to process in parallel
   
   // Handle file upload
@@ -112,7 +74,7 @@ const Home = () => {
     });
   }, [file, selectedEmailColumn]);
   
-  // Validate emails using ZeroBounce API
+  // Validate emails using external API
   const validateEmails = async (emailsToValidate) => {
     if (emailsToValidate.length === 0) {
       setIsProcessing(false);
@@ -126,7 +88,7 @@ const Home = () => {
     // Process emails in batches to avoid rate limiting
     for (let i = 0; i < emailsToValidate.length; i += MAX_BATCH_SIZE) {
       const batch = emailsToValidate.slice(i, i + MAX_BATCH_SIZE);
-      const validationPromises = batch.map(email => validateSingleEmail(email));
+      const validationPromises = batch.map(email => validateSingleEmailViaAPI(email));
       
       try {
         const batchResults = await Promise.all(validationPromises);
@@ -154,133 +116,31 @@ const Home = () => {
     setProcessingMessage(`Completed validation of ${emailsToValidate.length} emails.`);
   };
   
-  // Validate a single email
-  const validateSingleEmail = async (email) => {
-    // Initial result object
-    let result = {
-      originalEmail: email,
-      correctedEmail: email,
-      isValid: false,
-      status: 'Invalid',
-      message: ''
-    };
-    
+  // Validate a single email via API
+  const validateSingleEmailViaAPI = async (email) => {
     try {
-      // Step 1: Basic Format Check & Initial Syntax Fixes
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        result.message = 'Invalid email format';
-        return result;
+      // Call the external validation API
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}: ${response.statusText}`);
       }
       
-      // Split email into parts
-      let [username, domainPart] = email.split('@');
+      const result = await response.json();
       
-      // Normalize case immediately for consistent checking
-      username = username.toLowerCase();
-      domainPart = domainPart.toLowerCase();
-      
-      // Initial email correction based on common typos
-      let correctedDomainPart = domainPart;
-      
-      // Check for common domain typos
-      if (DOMAIN_CORRECTIONS[domainPart]) {
-        correctedDomainPart = DOMAIN_CORRECTIONS[domainPart];
-        result.correctedEmail = `${username}@${correctedDomainPart}`;
-        result.message = `Corrected domain from ${domainPart} to ${correctedDomainPart}`;
-        result.status = 'Needs Review';
-      } else {
-        result.correctedEmail = `${username}@${domainPart}`;
+      if (!result.success) {
+        throw new Error(result.message || 'API validation failed');
       }
       
-      // Step 2: Check Against Company List
-      const domain = correctedDomainPart;
-      let skipZeroBounce = false;
+      // Return the validation data from the API
+      return result.data;
       
-      if (KNOWN_COMPANY_EMAILS[domain]) {
-        // If it's a known company email, mark as valid and skip ZeroBounce check
-        skipZeroBounce = true;
-        result.isValid = true;
-        result.status = 'Valid';
-        result.message = result.message 
-          ? `${result.message}. Email domain is from known company list.` 
-          : 'Email domain is from known company list';
-      }
-      
-      // Step 3: Use ZeroBounce API for emails not in company list
-      if (!skipZeroBounce) {
-        try {
-          const zeroBounceResult = await callZeroBounceAPI(result.correctedEmail);
-          
-          // Update results based on ZeroBounce response
-          result.isValid = zeroBounceResult.status === 'valid';
-          result.status = zeroBounceResult.status === 'valid' ? 'Valid' : 'Invalid';
-          
-          // Add API validation message
-          result.message = result.message 
-            ? `${result.message}. ZeroBounce status: ${zeroBounceResult.status}.` 
-            : `ZeroBounce status: ${zeroBounceResult.status}`;
-          
-          // Step 4: Check "Did You Mean" suggestions from ZeroBounce
-          if (zeroBounceResult.did_you_mean) {
-            result.correctedEmail = zeroBounceResult.did_you_mean;
-            result.message = `${result.message} ZeroBounce suggested correction: ${zeroBounceResult.did_you_mean}`;
-            result.status = 'Needs Review';
-          }
-        } catch (apiError) {
-          console.error(`ZeroBounce API error for ${email}:`, apiError);
-          result.message = `API validation error: ${apiError.message || 'Unknown error'}`;
-          result.status = 'Needs Review';
-        }
-      }
-      
-      // Step 5: Final Syntax Cleanup
-      // Extract parts again using the potentially corrected email
-      [username, domainPart] = result.correctedEmail.split('@');
-      
-      // Remove + suffix from username
-      if (username.includes('+')) {
-        const cleanUsername = username.split('+')[0];
-        result.correctedEmail = `${cleanUsername}@${domainPart}`;
-        result.message = result.message 
-          ? `${result.message}. Removed + suffix from username.` 
-          : 'Removed + suffix from username';
-        
-        if (result.status === 'Valid') {
-          result.status = 'Needs Review';
-        }
-      }
-      
-      // Ensure email is lowercase
-      const lowercaseEmail = result.correctedEmail.toLowerCase();
-      if (result.correctedEmail !== lowercaseEmail) {
-        result.correctedEmail = lowercaseEmail;
-        result.message = result.message 
-          ? `${result.message}. Normalized case.` 
-          : 'Normalized case';
-      }
-      
-      // Remove any leading/trailing whitespace
-      const trimmedEmail = result.correctedEmail.trim();
-      if (result.correctedEmail !== trimmedEmail) {
-        result.correctedEmail = trimmedEmail;
-        result.message = result.message 
-          ? `${result.message}. Removed whitespace.` 
-          : 'Removed whitespace';
-      }
-      
-      // Final classification refinement
-      if (result.correctedEmail === email && result.isValid) {
-        // Email is valid and unchanged
-        result.status = 'Valid';
-        result.message = 'Email is valid';
-      } else if (result.correctedEmail !== email && result.isValid) {
-        // Email was corrected but is valid
-        result.status = 'Needs Review';
-        result.message = `Suggested correction: ${result.correctedEmail}. ${result.message}`;
-      }
-      
-      return result;
     } catch (error) {
       console.error(`Error validating ${email}:`, error);
       return {
@@ -290,23 +150,6 @@ const Home = () => {
         status: 'Invalid',
         message: `Error during validation: ${error.message || 'Unknown error'}`
       };
-    }
-  };
-  
-  // Call ZeroBounce API
-  const callZeroBounceAPI = async (email) => {
-    try {
-      const apiUrl = `https://api.zerobounce.net/v2/validate?api_key=${ZEROBOUNCE_API_KEY}&email=${encodeURIComponent(email)}`;
-      const response = await fetch(apiUrl);
-      
-      if (!response.ok) {
-        throw new Error(`API returned ${response.status}: ${response.statusText}`);
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error("ZeroBounce API error:", error);
-      throw error;
     }
   };
   
@@ -354,7 +197,6 @@ const Home = () => {
   // Stats for summary
   const validCount = validationResults.filter(r => r.status === 'Valid').length;
   const invalidCount = validationResults.filter(r => r.status === 'Invalid').length;
-  const reviewCount = validationResults.filter(r => r.status === 'Needs Review').length;
   
   const getStatusColor = (status) => {
     switch (status) {
@@ -362,8 +204,6 @@ const Home = () => {
         return '#4CAF50'; // Green
       case 'Invalid':
         return '#F44336'; // Red
-      case 'Needs Review':
-        return '#FF9800'; // Orange
       default:
         return '#9E9E9E'; // Grey
     }
@@ -568,21 +408,6 @@ const Home = () => {
                   borderRadius: '50%'
                 }}></span>
                 <span>Valid: {validCount}</span>
-              </div>
-              
-              <div style={{ 
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px'
-              }}>
-                <span style={{ 
-                  display: 'inline-block',
-                  width: '12px',
-                  height: '12px',
-                  backgroundColor: '#FF9800',
-                  borderRadius: '50%'
-                }}></span>
-                <span>Needs Review: {reviewCount}</span>
               </div>
               
               <div style={{ 
